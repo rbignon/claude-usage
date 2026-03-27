@@ -8,6 +8,9 @@ USAGE_TTL=300  # 5 minutes
 STATUS_CACHE="/tmp/claude-status-cache"
 STATUS_TTL=60  # 1 minute
 
+BENCH_CACHE="/tmp/claude-bench-cache"
+BENCH_TTL=900  # 15 minutes
+
 get_color() {
     local pct=$1
     if [[ $pct -ge 90 ]]; then
@@ -16,6 +19,26 @@ get_color() {
         echo "#FFFF55"  # Yellow
     else
         echo "#55FF55"  # Green
+    fi
+}
+
+get_bench_indicator() {
+    local score=$1
+    if (( $(echo "$score >= 90" | bc -l) )); then
+        echo "▲"
+    else
+        echo "▼"
+    fi
+}
+
+get_bench_color() {
+    local score=$1
+    if (( $(echo "$score >= 90" | bc -l) )); then
+        echo "#55FF55"  # Green
+    elif (( $(echo "$score >= 80" | bc -l) )); then
+        echo "#FFFF55"  # Yellow
+    else
+        echo "#FF5555"  # Red
     fi
 }
 
@@ -45,6 +68,19 @@ read_cache() {
         fi
     fi
     return 1
+}
+
+# Benchmark score (15-minute cache)
+bench=$(read_cache "$BENCH_CACHE" "$BENCH_TTL") || {
+    fresh=$(~/.local/bin/claude-usage --bench 2>/dev/null)
+    if [[ -n "$fresh" && "$fresh" != "unknown" ]]; then
+        bench="$fresh"
+        echo "$bench" > "$BENCH_CACHE"
+    elif [[ -f "$BENCH_CACHE" ]]; then
+        bench=$(cat "$BENCH_CACHE")
+    else
+        bench="unknown"
+    fi
 }
 
 # Service status (1-minute cache)
@@ -77,7 +113,12 @@ if [[ -z "$usage_raw" ]]; then
 fi
 
 # Build i3bar JSON blocks
-blocks=$(json_block "●" "$status_color")
+if [[ "$bench" != "unknown" ]]; then
+    blocks=$(json_block "$(get_bench_indicator "$bench")" "$(get_bench_color "$bench")")
+else
+    blocks=$(json_block "-" "#888888")
+fi
+blocks="${blocks},$(json_block "●" "$status_color")"
 
 if [[ -n "$usage_raw" ]]; then
     IFS='|' read -r session_text session_pct week_text week_pct <<< "$usage_raw"

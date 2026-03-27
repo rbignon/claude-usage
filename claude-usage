@@ -11,6 +11,7 @@
 #   claude-usage --json       Raw JSON from API
 #   claude-usage --statusbar  Compact format for i3status/statusbars
 #   claude-usage --status     Claude Code service status from status.claude.com
+#   claude-usage --bench      Latest benchmark score from isclaudedumb.today
 #
 # REQUIREMENTS
 #   - Firefox with an active claude.ai session
@@ -31,8 +32,19 @@
 #   $ claude-usage --status
 #   operational
 #
+#   $ claude-usage --bench
+#   92.7
+#
 
 set -e
+
+# Benchmark score (no authentication needed)
+if [[ "${1:-}" == "--bench" ]]; then
+    score=$(curl -sf --max-time 5 "https://isclaudedumb.today/data/latest.json" | \
+        jq -r '.score // empty' 2>/dev/null) || true
+    echo "${score:-unknown}"
+    exit 0
+fi
 
 # Service status check (no authentication needed)
 if [[ "${1:-}" == "--status" ]]; then

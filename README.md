@@ -5,7 +5,7 @@ Fetch Claude usage stats (session and weekly quotas) from claude.ai, with i3stat
 ## Requirements
 
 - Firefox with an active claude.ai session
-- `sqlite3`, `curl`, `jq`
+- `sqlite3`, `curl`, `jq`, `bc`
 
 ## Setup
 
@@ -30,32 +30,38 @@ claude-usage --statusbar
 # Claude Code service status from status.claude.com
 claude-usage --status
 # operational
+
+# Latest benchmark score from isclaudedumb.today
+claude-usage --bench
+# 92.7
 ```
 
 ## i3status integration
 
-`i3/claude-usage.sh` wraps `claude-usage` with caching and outputs i3bar-compatible JSON blocks, including a service status indicator dot.
+`i3/claude-usage.sh` wraps `claude-usage` with caching and outputs i3bar-compatible JSON blocks.
 
 ### Output
 
-Three JSON blocks prepended to your i3status bar:
+Four JSON blocks prepended to your i3status bar:
 
 | Block | Description | Colors |
 |-------|-------------|--------|
+| `▲` / `▼` | Benchmark score (isclaudedumb.today) | `▲` green >= 90%, `▼` yellow >= 80%, `▼` red < 80%, gray = unknown |
 | `●` | Claude Code service status | green = operational, yellow = degraded, orange = partial outage, red = major outage, blue = maintenance, gray = unknown |
 | `████░░ 40% 2h` | Session usage (5-hour window) | green < 70%, yellow >= 70%, red >= 90% |
 | `██░░░░ 20% 3d` | Weekly usage (7-day window) | same thresholds |
 
 ### Cache
 
-Two independent caches to minimize API calls:
+Three independent caches to minimize API calls:
 
 | Cache | TTL | File |
 |-------|-----|------|
+| Benchmark score | 900s | `/tmp/claude-bench-cache` |
 | Service status | 60s | `/tmp/claude-status-cache` |
 | Usage data | 300s | `/tmp/claude-usage-cache` |
 
-Both fall back to stale cached values on fetch failure.
+All three fall back to stale cached values on fetch failure.
 
 ### i3 configuration
 
