@@ -1,0 +1,162 @@
+#!/bin/bash
+#
+# claude-usage - Fetch Claude usage stats from claude.ai
+#
+# DESCRIPTION
+#   Retrieves usage quotas (session and weekly limits) from claude.ai API
+#   using Firefox session cookies for authentication.
+#
+# USAGE
+#   claude-usage              Human-readable format
+#   claude-usage --json       Raw JSON from API
+#   claude-usage --statusbar  Compact format for i3status/statusbars
+#   claude-usage --status     Claude Code service status from status.claude.com
+#
+# REQUIREMENTS
+#   - Firefox with an active claude.ai session
+#   - sqlite3, curl, jq
+#
+# CONFIGURATION
+#   Set CLAUDE_ORG_ID environment variable to your organization ID from claude.ai
+#   (visible in network requests to /api/organizations/*/usage)
+#
+# EXAMPLES
+#   $ claude-usage
+#   Session:  45%  (resets 18:00)
+#   Week:     29%  (resets 2025-12-27)
+#
+#   $ claude-usage --statusbar
+#   ████▌░░░░░ 45% 2h 15m|45|██▊░░░░░░░ 29% 4d 5h|29
+#
+#   $ claude-usage --status
+#   operational
+#
+
+set -e
+
+# Service status check (no authentication needed)
+if [[ "${1:-}" == "--status" ]]; then
+    status=$(curl -sf --max-time 5 "https://status.claude.com/api/v2/summary.json" | \
+        jq -r '(.components[] | select(.name == "Claude Code") | .status) // empty' 2>/dev/null) || true
+    echo "${status:-unknown}"
+    exit 0
+fi
+
+# Claude organization ID (from claude.ai)
+if [[ -z "${CLAUDE_ORG_ID:-}" ]]; then
+    echo "Error: CLAUDE_ORG_ID environment variable not set" >&2
+    exit 1
+fi
+
+# Find most recently modified Firefox profile
+FF_PROFILE=$(ls -td ~/.mozilla/firefox/*.default* ~/.mozilla/firefox/*.default-esr 2>/dev/null | head -1)
+
+if [[ -z "$FF_PROFILE" ]]; then
+    echo "Error: Firefox profile not found" >&2
+    exit 1
+fi
+
+COOKIES_DB="$FF_PROFILE/cookies.sqlite"
+
+if [[ ! -f "$COOKIES_DB" ]]; then
+    echo "Error: Firefox cookies.sqlite not found" >&2
+    exit 1
+fi
+
+# Copy because Firefox locks the file
+TMP_DB=$(mktemp)
+cp "$COOKIES_DB" "$TMP_DB"
+
+# Extract claude.ai cookies
+COOKIES=$(sqlite3 "$TMP_DB" "
+  SELECT name || '=' || value
+  FROM moz_cookies
+  WHERE host LIKE '%claude.ai'
+" | tr '\n' '; ')
+
+rm "$TMP_DB"
+
+if [[ -z "$COOKIES" ]]; then
+    echo "Error: No claude.ai cookies found. Please login to claude.ai in Firefox." >&2
+    exit 1
+fi
+
+# Fetch usage data
+RESPONSE=$(curl -s "https://claude.ai/api/organizations/${CLAUDE_ORG_ID}/usage" \
+  -H "Cookie: $COOKIES" \
+  -H 'accept: */*' \
+  -H 'accept-language: en-US,en;q=0.9' \
+  -H 'dnt: 1' \
+  -H 'sec-ch-ua: "Chromium";v="143", "Not A(Brand";v="24"' \
+  -H 'sec-ch-ua-mobile: ?0' \
+  -H 'sec-ch-ua-platform: "Linux"' \
+  -H 'sec-fetch-dest: empty' \
+  -H 'sec-fetch-mode: cors' \
+  -H 'sec-fetch-site: same-origin' \
+  -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36'
+)
+
+# Check for error
+if echo "$RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+    echo "Error: $(echo "$RESPONSE" | jq -r '.error')" >&2
+    exit 1
+fi
+
+# Output format based on argument
+case "${1:-}" in
+    --json)
+        echo "$RESPONSE" | jq '.'
+        ;;
+    --statusbar)
+        # Compact format for statusbar with progress bars
+        # Output: SESSION_TEXT|SESSION_PCT|WEEK_TEXT|WEEK_PCT
+        echo "$RESPONSE" | jq -r '
+            def progress_bar(pct):
+                (pct / 10 | floor) as $full |
+                ((pct % 10) / 2 | floor) as $partial |
+                (10 - $full - (if $partial > 0 then 1 else 0 end)) as $empty |
+                ("█" * $full) +
+                (if $partial == 1 then "▌" elif $partial == 2 then "▌" elif $partial >= 3 then "▊" else "" end) +
+                ("░" * $empty);
+
+            def time_until(iso):
+                if iso == null then "--"
+                else
+                    ((iso | split(".")[0] + "Z" | fromdateiso8601) - now) as $secs |
+                    if $secs < 3600 then
+                        (($secs / 60 | floor | tostring) + "m")
+                    elif $secs < 86400 then
+                        (($secs / 3600 | floor) as $hours |
+                         (($secs % 3600) / 60 | floor) as $mins |
+                         ($hours | tostring) + "h " + ($mins | tostring) + "m")
+                    else
+                        (($secs / 86400 | floor) as $days |
+                         (($secs % 86400) / 3600 | floor) as $hours |
+                         ($days | tostring) + "d " + ($hours | tostring) + "h")
+                    end
+                end;
+
+            (progress_bar(.five_hour.utilization) + " " +
+             (.five_hour.utilization | floor | tostring) + "% " +
+             time_until(.five_hour.resets_at)) + "|" +
+            (.five_hour.utilization | floor | tostring) + "|" +
+            (progress_bar(.seven_day.utilization) + " " +
+             (.seven_day.utilization | floor | tostring) + "% " +
+             time_until(.seven_day.resets_at)) + "|" +
+            (.seven_day.utilization | floor | tostring)
+        '
+        ;;
+    *)
+        # Human readable format
+        echo "$RESPONSE" | jq -r '
+            def format_time(iso): if iso == null then "--" else (iso | split("T")[1] | split(".")[0] | split(":")[0:2] | join(":")) end;
+            def format_date(iso): if iso == null then "--" else (iso | split("T")[0]) end;
+
+            "Session:  \(.five_hour.utilization)%  (resets \(format_time(.five_hour.resets_at)))",
+            "Week:     \(.seven_day.utilization)%  (resets \(format_date(.seven_day.resets_at)))",
+            if .seven_day_sonnet and .seven_day_sonnet.utilization > 0 then
+                "Sonnet:   \(.seven_day_sonnet.utilization)%  (resets \(format_date(.seven_day_sonnet.resets_at)))"
+            else empty end
+        '
+        ;;
+esac
