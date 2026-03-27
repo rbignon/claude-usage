@@ -43,7 +43,7 @@ Three JSON blocks prepended to your i3status bar:
 | Block | Description | Colors |
 |-------|-------------|--------|
 | `●` | Claude Code service status | green = operational, yellow = degraded, orange = partial outage, red = major outage, blue = maintenance, gray = unknown |
-| `◆ ████░░ 40% 2h` | Session usage (5-hour window) | green < 70%, yellow >= 70%, red >= 90% |
+| `████░░ 40% 2h` | Session usage (5-hour window) | green < 70%, yellow >= 70%, red >= 90% |
 | `██░░░░ 20% 3d` | Weekly usage (7-day window) | same thresholds |
 
 ### Cache
