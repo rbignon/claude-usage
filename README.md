@@ -1,6 +1,6 @@
 # claude-usage
 
-Fetch Claude usage stats (session and weekly quotas) from claude.ai, with i3status bar integration and service status monitoring.
+Fetch Claude usage stats (weekly quotas, global and per model) from claude.ai, with i3status bar integration and service status monitoring.
 
 ## Requirements
 
@@ -17,15 +17,16 @@ Fetch Claude usage stats (session and weekly quotas) from claude.ai, with i3stat
 ```bash
 # Human-readable format
 claude-usage
-# Session:  45%  (resets 18:00)
-# Week:     29%  (resets 2025-12-27)
+# Week:     47%  (resets 2026-11-23)
+# Fable:    58%  (resets 2026-11-23)
 
 # Raw JSON from API
 claude-usage --json
 
-# Compact format for statusbars
+# Compact format for statusbars: one LABEL|TEXT|PCT line per limit
 claude-usage --statusbar
-# ████▌░░░░░ 45% 2h 15m|45|██▊░░░░░░░ 29% 4d 5h|29
+# |████▊░░░░░ 47% 1d 19h|47
+# Fable|█████▊░░░░ 58% 1d 19h|58
 
 # Claude Code service status from status.claude.com
 claude-usage --status
@@ -42,14 +43,16 @@ claude-usage --bench
 
 ### Output
 
-Four JSON blocks prepended to your i3status bar:
+JSON blocks prepended to your i3status bar: two indicators, then one block per usage limit reported by the API.
 
 | Block | Description | Colors |
 |-------|-------------|--------|
 | `▲` / `▼` | Benchmark score (isclaudedumb.today) | `▲` green >= 90%, `▼` yellow >= 80%, `▼` red < 80%, gray = unknown |
 | `●` | Claude Code service status | green = operational, yellow = degraded, orange = partial outage, red = major outage, blue = maintenance, gray = unknown |
-| `████░░ 40% 2h` | Session usage (5-hour window) | green < 70%, yellow >= 70%, red >= 90% |
-| `██░░░░ 20% 3d` | Weekly usage (7-day window) | same thresholds |
+| `████░░ 47% 1d 19h` | Weekly usage, all models (7-day window) | green < 70%, yellow >= 70%, red >= 90% |
+| `Fable █████░ 58% 1d 19h` | Weekly usage of a per-model quota, prefixed with the model name (one block per quota) | same thresholds |
+
+A single gray `--` block replaces the usage blocks when no usage data is available.
 
 ### Cache
 

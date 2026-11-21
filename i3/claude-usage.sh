@@ -120,15 +120,13 @@ else
 fi
 blocks="${blocks},$(json_block "●" "$status_color")"
 
-if [[ -n "$usage_raw" ]]; then
-    IFS='|' read -r session_text session_pct week_text week_pct <<< "$usage_raw"
-    session_color=$(get_color "$session_pct")
-    week_color=$(get_color "$week_pct")
-    blocks="${blocks},$(json_block "${session_text}" "$session_color")"
-    blocks="${blocks},$(json_block "$week_text" "$week_color")"
-else
-    blocks="${blocks},$(json_block "--" "#888888")"
-    blocks="${blocks},$(json_block "--" "#888888")"
-fi
+# One block per usage limit: each line of $usage_raw is LABEL|TEXT|PCT
+usage_blocks=""
+while IFS='|' read -r label text pct; do
+    # Skip malformed lines (empty data, cache written in an older format)
+    [[ "$pct" =~ ^[0-9]+$ ]] || continue
+    usage_blocks="${usage_blocks},$(json_block "${label:+$label }$text" "$(get_color "$pct")")"
+done <<< "$usage_raw"
+blocks="${blocks}${usage_blocks:-,$(json_block "--" "#888888")}"
 
 echo "$blocks"

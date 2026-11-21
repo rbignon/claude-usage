@@ -3,8 +3,8 @@
 # claude-usage - Fetch Claude usage stats from claude.ai
 #
 # DESCRIPTION
-#   Retrieves usage quotas (session and weekly limits) from claude.ai API
-#   using Firefox session cookies for authentication.
+#   Retrieves usage quotas (weekly limits, global and per model) from the
+#   claude.ai API using Firefox session cookies for authentication.
 #
 # USAGE
 #   claude-usage              Human-readable format
@@ -23,11 +23,12 @@
 #
 # EXAMPLES
 #   $ claude-usage
-#   Session:  45%  (resets 18:00)
-#   Week:     29%  (resets 2025-12-27)
+#   Week:     47%  (resets 2026-11-23)
+#   Fable:    58%  (resets 2026-11-23)
 #
 #   $ claude-usage --statusbar
-#   ████▌░░░░░ 45% 2h 15m|45|██▊░░░░░░░ 29% 4d 5h|29
+#   |████▊░░░░░ 47% 1d 19h|47
+#   Fable|█████▊░░░░ 58% 1d 19h|58
 #
 #   $ claude-usage --status
 #   operational
@@ -114,6 +115,21 @@ if echo "$RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
     exit 1
 fi
 
+# jq helpers shared by the output formats, both driven by the .limits array.
+#   limits: entries that carry a numeric percentage; anything else in the
+#     response (null quota, unexpected shape) is skipped instead of failing.
+#   limit_label($all): model name for a per-model limit, $all for the global
+#     weekly limit, raw kind otherwise. Characters that would break the
+#     pipe-delimited --statusbar format or the JSON built by the i3 wrapper
+#     are stripped.
+JQ_LIMITS='
+    def limits: .limits? | arrays | .[] | objects | select(.percent | type == "number");
+    def limit_label($all):
+        (.scope.model?.display_name? //
+         (if .kind == "weekly_all" then $all else .kind // "limit" end)) |
+        tostring | gsub("[|\"\\\\[:cntrl:]]"; "");
+'
+
 # Output format based on argument
 case "${1:-}" in
     --json)
@@ -121,8 +137,9 @@ case "${1:-}" in
         ;;
     --statusbar)
         # Compact format for statusbar with progress bars
-        # Output: SESSION_TEXT|SESSION_PCT|WEEK_TEXT|WEEK_PCT
-        echo "$RESPONSE" | jq -r '
+        # Output: one line per limit, LABEL|TEXT|PCT
+        # (LABEL is empty for the global weekly limit)
+        echo "$RESPONSE" | jq -r "$JQ_LIMITS"'
             def progress_bar(pct):
                 (pct / 10 | floor) as $full |
                 ((pct % 10) / 2 | floor) as $partial |
@@ -132,9 +149,12 @@ case "${1:-}" in
                 ("░" * $empty);
 
             def time_until(iso):
-                if iso == null then "--"
+                # The first 19 characters are YYYY-MM-DDTHH:MM:SS (UTC), with or
+                # without fractional seconds and offset after them
+                (iso | tostring | .[0:19] + "Z" | try fromdateiso8601 catch null) as $ts |
+                if $ts == null then "--"
                 else
-                    ((iso | split(".")[0] + "Z" | fromdateiso8601) - now) as $secs |
+                    ($ts - now) as $secs |
                     if $secs < 3600 then
                         (($secs / 60 | floor | tostring) + "m")
                     elif $secs < 86400 then
@@ -148,27 +168,26 @@ case "${1:-}" in
                     end
                 end;
 
-            (progress_bar(.five_hour.utilization) + " " +
-             (.five_hour.utilization | floor | tostring) + "% " +
-             time_until(.five_hour.resets_at)) + "|" +
-            (.five_hour.utilization | floor | tostring) + "|" +
-            (progress_bar(.seven_day.utilization) + " " +
-             (.seven_day.utilization | floor | tostring) + "% " +
-             time_until(.seven_day.resets_at)) + "|" +
-            (.seven_day.utilization | floor | tostring)
+            limits |
+            (.percent | floor) as $pct |
+            limit_label("") + "|" +
+            progress_bar([[$pct, 0] | max, 100] | min) + " " + ($pct | tostring) + "% " +
+            time_until(.resets_at) + "|" +
+            ($pct | tostring)
         '
         ;;
     *)
         # Human readable format
-        echo "$RESPONSE" | jq -r '
-            def format_time(iso): if iso == null then "--" else (iso | split("T")[1] | split(".")[0] | split(":")[0:2] | join(":")) end;
-            def format_date(iso): if iso == null then "--" else (iso | split("T")[0]) end;
+        echo "$RESPONSE" | jq -r "$JQ_LIMITS"'
+            def format_date(iso): (iso | strings | split("T")[0]) // "--";
 
-            "Session:  \(.five_hour.utilization)%  (resets \(format_time(.five_hour.resets_at)))",
-            "Week:     \(.seven_day.utilization)%  (resets \(format_date(.seven_day.resets_at)))",
-            if .seven_day_sonnet and .seven_day_sonnet.utilization > 0 then
-                "Sonnet:   \(.seven_day_sonnet.utilization)%  (resets \(format_date(.seven_day_sonnet.resets_at)))"
-            else empty end
+            [limits] |
+            if length == 0 then "No usage limits reported"
+            else .[] |
+                (limit_label("Week") + ":") as $label |
+                $label + (" " * ([10 - ($label | length), 1] | max)) +
+                "\(.percent)%  (resets \(format_date(.resets_at)))"
+            end
         '
         ;;
 esac
